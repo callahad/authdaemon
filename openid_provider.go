@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/square/go-jose"
+	"reflect"
+	"strings"
 )
 
-func oidcAddRoutes(router *gin.Engine, origin string, rsakey *rsa.PrivateKey) {
+func oidcAddRoutes(router gin.IRouter, origin string, rsakey *rsa.PrivateKey) {
 	jwksPath := "/jwks.json"
 	authPath := "/authorize"
 
@@ -93,8 +95,34 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 	return func(c *gin.Context) {
 		var form AuthRequest
 
-		if err := c.Bind(&form); err != nil {
-			panic(err)
+		err := c.Bind(&form)
+
+		// Look at every required field in the AuthRequest. If any are missing,
+		// fail early and return a human-friendly error message.
+		structure := reflect.TypeOf(form)
+		values := reflect.ValueOf(form)
+		for i := 0; i < structure.NumField(); i++ {
+			field := structure.Field(i)
+			name := field.Tag.Get("form")
+			required := field.Tag.Get("binding") == "required"
+			value := strings.TrimSpace(values.Field(i).String())
+
+			if required && value == "" {
+				c.JSON(400, gin.H{
+					"error":   "Missing Field",
+					"message": fmt.Sprintf("No value for required field: %s", name),
+				})
+				return
+			}
+		}
+
+		// Did we miss anything?
+		if err != nil {
+			c.JSON(400, gin.H{
+				"error":   "Unknown Error",
+				"message": err.Error(),
+			})
+			return
 		}
 
 		c.String(500, "FIXME: Unimplemented")
