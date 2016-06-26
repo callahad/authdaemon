@@ -79,19 +79,9 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 	/* TODO: Accept an OpenID Connect authorization request, validate it, and
 		trigger an appropriate auth method.
 
-	    Values to look at:
-	        scope           must be "openid email"
-	        response_type   must be "id_token"
-	        client_id       must be a valid origin and match Origin header (if sent)
-	        redirect_uri    must be a valid URI within the client_id's origin
-	        response_mode   optional, fail if present and not "form_post"
-	        login_hint      optional, valid email address, for now, fail if omitted
-
-	    Values to pass through:
+		TODO: Values to pass through:
 	        state           optional string, returned outside of the JWT
 	        nonce           optional string, returned inside of the JWT
-
-	    If everything validates, select the first capable provider and begin auth.
 	*/
 
 	return func(c *gin.Context) {
@@ -121,47 +111,60 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 			return
 		}
 
-		// Now validate the values
-		if form.Scope != "openid email" {
-			fail(c, "Bad Value", "scope must be exactly 'openid email'")
-			return
+		urlNote := "Note: urls must be absolute, use http or https, and must omit default ports"
+
+		// TODO: Use a struct to clean this up
+		tests := []testCase{
+			// scope
+			{
+				"scope must be exactly 'openid email'",
+				form.Scope != "openid email",
+			},
+
+			// response_type
+			{
+				"response_type must be exactly 'id_token'",
+				form.ResponseType != "id_token",
+			},
+
+			// client_id (TODO: Validate against Origin or Referer headers?)
+			{
+				"client_id does not look like a valid url. " + urlNote,
+				!validUri(form.ClientId),
+			},
+			{
+				"client_id must not include paths, query values, or fragments",
+				!onlyOrigin(form.ClientId),
+			},
+
+			// redirect_uri
+			{
+				"redirect_uri does not look like a valid url. " + urlNote,
+				!validUri(form.RedirectUri),
+			},
+			{
+				"redirect_uri must be an absolute url that falls within client_id's origin",
+				!containedBy(form.RedirectUri, form.ClientId),
+			},
+
+			// response_mode
+			{
+				"The only supported response_mode is 'form_post'",
+				form.ResponseMode != "form_post" && form.ResponseMode != "",
+			},
+
+			// login_hint (TODO Make optional)
+			{
+				"login_hint does not look like an email address",
+				!validEmail(form.LoginHint),
+			},
 		}
 
-		if form.ResponseType != "id_token" {
-			fail(c, "Bad Value", "response_type must be exactly 'id_token'")
-			return
-		}
-
-		if !validUri(form.ClientId) {
-			fail(c, "Bad Value", "client_id does not look like a valid url. Note: urls must be absolute, of scheme http or https, and omit the default ports for that scheme.")
-			return
-		}
-
-		if !validUri(form.RedirectUri) {
-			fail(c, "Bad Value", "redirect_uri does not look like a valid url. Note: urls must be absolute, of scheme http or https, and omit the default ports for that scheme.")
-			return
-		}
-
-		// TODO: Debatable?
-		if !onlyOrigin(form.ClientId) {
-			fail(c, "Bad Value", "client_id must not include paths, query values, or fragments")
-			return
-		}
-
-		if !containedBy(form.RedirectUri, form.ClientId) {
-			fail(c, "Bad Value", "redirect_uri must be an absolute url that falls within client_id's origin")
-			return
-		}
-
-		if form.ResponseMode != "form_post" && form.ResponseMode != "" {
-			fail(c, "Bad Value", "The only supported response_mode is 'form_post'")
-			return
-		}
-
-		// TODO: Make login_hint optional
-		if !validEmail(form.LoginHint) {
-			fail(c, "Bad Value", "login_hint does not look like an email address")
-			return
+		for _, v := range tests {
+			if v.value {
+				fail(c, "Bad Value", v.description)
+				return
+			}
 		}
 
 		c.String(500, "FIXME: Unimplemented")
@@ -184,6 +187,11 @@ type AuthRequest struct {
 	ResponseMode string `form:"response_mode"`
 	State        string `form:"state"`
 	Nonce        string `form:"nonce"`
+}
+
+type testCase struct {
+	description string
+	value       bool
 }
 
 // --- HELPERS ---
