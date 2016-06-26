@@ -117,51 +117,51 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 		tests := []testCase{
 			// scope
 			{
+				form.Scope == "openid email",
 				"scope must be exactly 'openid email'",
-				form.Scope != "openid email",
 			},
 
 			// response_type
 			{
+				form.ResponseType == "id_token",
 				"response_type must be exactly 'id_token'",
-				form.ResponseType != "id_token",
 			},
 
 			// client_id (TODO: Validate against Origin or Referer headers?)
 			{
+				validUri(form.ClientId),
 				"client_id does not look like a valid url. " + urlNote,
-				!validUri(form.ClientId),
 			},
 			{
+				onlyOrigin(form.ClientId),
 				"client_id must not include paths, query values, or fragments",
-				!onlyOrigin(form.ClientId),
 			},
 
 			// redirect_uri
 			{
+				validUri(form.RedirectUri),
 				"redirect_uri does not look like a valid url. " + urlNote,
-				!validUri(form.RedirectUri),
 			},
 			{
+				containedBy(form.RedirectUri, form.ClientId),
 				"redirect_uri must be an absolute url that falls within client_id's origin",
-				!containedBy(form.RedirectUri, form.ClientId),
 			},
 
 			// response_mode
 			{
+				form.ResponseMode == "form_post" || form.ResponseMode == "",
 				"The only supported response_mode is 'form_post'",
-				form.ResponseMode != "form_post" && form.ResponseMode != "",
 			},
 
 			// login_hint (TODO Make optional)
 			{
+				validEmail(form.LoginHint),
 				"login_hint does not look like an email address",
-				!validEmail(form.LoginHint),
 			},
 		}
 
 		for _, v := range tests {
-			if v.value {
+			if !v.value {
 				fail(c, "Bad Value", v.description)
 				return
 			}
@@ -190,8 +190,8 @@ type AuthRequest struct {
 }
 
 type testCase struct {
-	description string
 	value       bool
+	description string
 }
 
 // --- HELPERS ---
@@ -223,22 +223,22 @@ func validUri(uri string) bool {
 
 	tests := []bool{
 		// URL must parse
-		err != nil,
+		err == nil,
 
 		// Must be either HTTP or HTTPS and omit default ports
-		u.Scheme != "http" && u.Scheme != "https",
-		u.Scheme == "http" && strings.HasSuffix(u.Host, ":80"),
-		u.Scheme == "https" && strings.HasSuffix(u.Host, ":443"),
+		u.Scheme == "http" || u.Scheme == "https",
+		!(u.Scheme == "http" && strings.HasSuffix(u.Host, ":80")),
+		!(u.Scheme == "https" && strings.HasSuffix(u.Host, ":443")),
 
 		// Must not have opaque data
-		u.Opaque != "",
+		u.Opaque == "",
 
 		// Must not have a user:password prefix
-		u.User != nil,
+		u.User == nil,
 	}
 
 	for _, test := range tests {
-		if test {
+		if !test {
 			return false
 		}
 	}
