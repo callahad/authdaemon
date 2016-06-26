@@ -90,20 +90,9 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 
 		bindErr := c.Bind(&form)
 
-		// Look at every required field in the AuthRequest. If any are missing,
-		// fail early and return a human-friendly error message.
-		structure := reflect.TypeOf(form)
-		values := reflect.ValueOf(form)
-		for i := 0; i < structure.NumField(); i++ {
-			field := structure.Field(i)
-			required := field.Tag.Get("binding") == "required"
-			name := field.Tag.Get("form")
-			value := strings.TrimSpace(values.Field(i).String())
-
-			if required && value == "" {
-				fail(c, "Missing Field", fmt.Sprintf("No value for: %s", name))
-				return
-			}
+		if fieldsErr := form.complete(); fieldsErr != nil {
+			fail(c, "Missing Field", fieldsErr.Error())
+			return
 		}
 
 		if validErr := form.valid(); validErr != nil {
@@ -139,6 +128,25 @@ type AuthRequest struct {
 	Nonce        string `form:"nonce"`
 }
 
+// Verify that all required fields are present
+func (params *AuthRequest) complete() error {
+	structure := reflect.TypeOf(*params)
+	values := reflect.ValueOf(*params)
+	for i := 0; i < structure.NumField(); i++ {
+		field := structure.Field(i)
+		required := field.Tag.Get("binding") == "required"
+		name := field.Tag.Get("form")
+		value := strings.TrimSpace(values.Field(i).String())
+
+		if required && value == "" {
+			return errors.New(fmt.Sprintf("No value for required field: %s", name))
+		}
+	}
+
+	return nil
+}
+
+// Verify that all field values are valid
 func (params *AuthRequest) valid() error {
 	urlNote := "Note: urls must be absolute, use http or https, and must omit default ports"
 
@@ -218,7 +226,7 @@ func fail(c *gin.Context, what string, msg string) {
 	})
 }
 
-// Validating email addresses with regexes is of questionable value, and this
+// Validating email addresses using regexes is of questionable value, and this
 // pattern may exclude some legitimate addresses. Suggestions welcome.
 var emailRE = regexp.MustCompile(`^[a-zA-Z0-9][+-_.a-zA-Z0-9]*@[-_.a-zA-Z0-9]+$`)
 
@@ -265,6 +273,11 @@ func onlyOrigin(uri string) bool {
 }
 
 func containedBy(url string, origin string) bool {
+	// TODO: If it wasn't for validUri prohibiting user:pass prefixes, this
+	// could potentially be fooled by malicious redirect_uri's. For example,
+	// http://example.com@evil.com/ does have "http://example.com" as a prefix.
+	//
+	// Should we check for that explicitly? Or organize the tests differently?
 	if !validUri(origin) || !validUri(url) {
 		return false
 	}
