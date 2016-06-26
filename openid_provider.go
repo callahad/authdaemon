@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/square/go-jose"
+	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -78,7 +80,7 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 		trigger an appropriate auth method.
 
 	    Values to look at:
-	        scope           must be "openid"
+	        scope           must be "openid email"
 	        response_type   must be "id_token"
 	        client_id       must be a valid origin and match Origin header (if sent)
 	        redirect_uri    must be a valid URI within the client_id's origin
@@ -103,25 +105,62 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 		values := reflect.ValueOf(form)
 		for i := 0; i < structure.NumField(); i++ {
 			field := structure.Field(i)
-			name := field.Tag.Get("form")
 			required := field.Tag.Get("binding") == "required"
+			name := field.Tag.Get("form")
 			value := strings.TrimSpace(values.Field(i).String())
 
 			if required && value == "" {
-				c.JSON(400, gin.H{
-					"error":   "Missing Field",
-					"message": fmt.Sprintf("No value for required field: %s", name),
-				})
+				fail(c, "Missing Field", fmt.Sprintf("No value for: %s", name))
 				return
 			}
 		}
 
-		// Did we miss anything?
+		// Did something else go wrong?
 		if err != nil {
-			c.JSON(400, gin.H{
-				"error":   "Unknown Error",
-				"message": err.Error(),
-			})
+			fail(c, "Unknown Error", err.Error())
+			return
+		}
+
+		// Now validate the values
+		if form.Scope != "openid email" {
+			fail(c, "Bad Value", "scope must be exactly 'openid email'")
+			return
+		}
+
+		if form.ResponseType != "id_token" {
+			fail(c, "Bad Value", "response_type must be exactly 'id_token'")
+			return
+		}
+
+		if !validUri(form.ClientId) {
+			fail(c, "Bad Value", "client_id does not look like a valid url. Note: urls must be absolute, of scheme http or https, and omit the default ports for that scheme.")
+			return
+		}
+
+		if !validUri(form.RedirectUri) {
+			fail(c, "Bad Value", "redirect_uri does not look like a valid url. Note: urls must be absolute, of scheme http or https, and omit the default ports for that scheme.")
+			return
+		}
+
+		// TODO: Debatable?
+		if !onlyOrigin(form.ClientId) {
+			fail(c, "Bad Value", "client_id must not include paths, query values, or fragments")
+			return
+		}
+
+		if !containedBy(form.RedirectUri, form.ClientId) {
+			fail(c, "Bad Value", "redirect_uri must be an absolute url that falls within client_id's origin")
+			return
+		}
+
+		if form.ResponseMode != "form_post" && form.ResponseMode != "" {
+			fail(c, "Bad Value", "The only supported response_mode is 'form_post'")
+			return
+		}
+
+		// TODO: Make login_hint optional
+		if !validEmail(form.LoginHint) {
+			fail(c, "Bad Value", "login_hint does not look like an email address")
 			return
 		}
 
@@ -153,4 +192,70 @@ func generateKid(key *rsa.PublicKey) string {
 	h := sha1.New()
 	h.Write(key.N.Bytes())
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func fail(c *gin.Context, what string, msg string) {
+	// TODO: There must be a better way to accmplish this...
+	c.JSON(400, gin.H{
+		"error":   what,
+		"message": msg,
+	})
+}
+
+// Validating email addresses with regexes is of questionable value, and this
+// pattern may exclude some legitimate addresses. Suggestions welcome.
+var emailRE = regexp.MustCompile(`^[a-zA-Z0-9][+-_.a-zA-Z0-9]*@[-_.a-zA-Z0-9]+$`)
+
+func validEmail(addr string) bool {
+	return emailRE.MatchString(addr)
+}
+
+func validUri(uri string) bool {
+	u, err := url.Parse(uri)
+
+	tests := []bool{
+		// URL must parse
+		err != nil,
+
+		// Must be either HTTP or HTTPS and omit default ports
+		u.Scheme != "http" && u.Scheme != "https",
+		u.Scheme == "http" && strings.HasSuffix(u.Host, ":80"),
+		u.Scheme == "https" && strings.HasSuffix(u.Host, ":443"),
+
+		// Must not have opaque data
+		u.Opaque != "",
+
+		// Must not have a user:password prefix
+		u.User != nil,
+	}
+
+	for _, test := range tests {
+		if test {
+			return false
+		}
+	}
+
+	return true
+}
+
+func onlyOrigin(uri string) bool {
+	u, err := url.Parse(uri)
+
+	if err != nil || !validUri(uri) || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+
+	return true
+}
+
+func containedBy(url string, origin string) bool {
+	if !validUri(origin) || !validUri(url) {
+		return false
+	}
+
+	if !onlyOrigin(origin) {
+		return false
+	}
+
+	return strings.HasPrefix(url, origin)
 }
