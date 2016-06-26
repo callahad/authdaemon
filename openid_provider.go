@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rsa"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/square/go-jose"
@@ -87,7 +88,7 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 	return func(c *gin.Context) {
 		var form AuthRequest
 
-		err := c.Bind(&form)
+		bindErr := c.Bind(&form)
 
 		// Look at every required field in the AuthRequest. If any are missing,
 		// fail early and return a human-friendly error message.
@@ -105,66 +106,15 @@ func authorize(origin string, key *rsa.PrivateKey) func(*gin.Context) {
 			}
 		}
 
-		// Did something else go wrong?
-		if err != nil {
-			fail(c, "Unknown Error", err.Error())
+		if validErr := form.valid(); validErr != nil {
+			fail(c, "Bad Value", validErr.Error())
 			return
 		}
 
-		urlNote := "Note: urls must be absolute, use http or https, and must omit default ports"
-
-		// TODO: Use a struct to clean this up
-		tests := []testCase{
-			// scope
-			{
-				form.Scope == "openid email",
-				"scope must be exactly 'openid email'",
-			},
-
-			// response_type
-			{
-				form.ResponseType == "id_token",
-				"response_type must be exactly 'id_token'",
-			},
-
-			// client_id (TODO: Validate against Origin or Referer headers?)
-			{
-				validUri(form.ClientId),
-				"client_id does not look like a valid url. " + urlNote,
-			},
-			{
-				onlyOrigin(form.ClientId),
-				"client_id must not include paths, query values, or fragments",
-			},
-
-			// redirect_uri
-			{
-				validUri(form.RedirectUri),
-				"redirect_uri does not look like a valid url. " + urlNote,
-			},
-			{
-				containedBy(form.RedirectUri, form.ClientId),
-				"redirect_uri must be an absolute url that falls within client_id's origin",
-			},
-
-			// response_mode
-			{
-				form.ResponseMode == "form_post" || form.ResponseMode == "",
-				"The only supported response_mode is 'form_post'",
-			},
-
-			// login_hint (TODO Make optional)
-			{
-				validEmail(form.LoginHint),
-				"login_hint does not look like an email address",
-			},
-		}
-
-		for _, v := range tests {
-			if !v.value {
-				fail(c, "Bad Value", v.description)
-				return
-			}
+		// Did something else go wrong?
+		if bindErr != nil {
+			fail(c, "Unknown Error", bindErr.Error())
+			return
 		}
 
 		c.String(500, "FIXME: Unimplemented")
@@ -189,8 +139,66 @@ type AuthRequest struct {
 	Nonce        string `form:"nonce"`
 }
 
+func (params *AuthRequest) valid() error {
+	urlNote := "Note: urls must be absolute, use http or https, and must omit default ports"
+
+	tests := []testCase{
+		// scope
+		{
+			params.Scope == "openid email",
+			"scope must be exactly 'openid email'",
+		},
+
+		// response_type
+		{
+			params.ResponseType == "id_token",
+			"response_type must be exactly 'id_token'",
+		},
+
+		// client_id (TODO: Validate against Origin or Referer headers?)
+		{
+			validUri(params.ClientId),
+			"client_id must be a valid url. " + urlNote,
+		},
+		{
+			onlyOrigin(params.ClientId),
+			"client_id must not include paths, query values, or fragments",
+		},
+
+		// redirect_uri
+		{
+			validUri(params.RedirectUri),
+			"redirect_uri must be a valid url. " + urlNote,
+		},
+		{
+			containedBy(params.RedirectUri, params.ClientId),
+			"redirect_uri must be an absolute url that falls within client_id's origin",
+		},
+
+		// response_mode
+		{
+			params.ResponseMode == "params_post" || params.ResponseMode == "",
+			"The only supported response_mode is 'params_post'",
+		},
+
+		// login_hint (TODO Make optional)
+		{
+			validEmail(params.LoginHint),
+			"login_hint does not look like an email address",
+		},
+	}
+
+	for _, v := range tests {
+		if !v.pass {
+			return errors.New(v.description)
+		}
+	}
+
+	return nil
+}
+
 type testCase struct {
-	value       bool
+	pass        bool
 	description string
 }
 
