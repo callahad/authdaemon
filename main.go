@@ -8,6 +8,7 @@ import (
 	"os"
 )
 
+// Program metadata and configuration
 const (
 	VERSION        = "0.1.0"
 	REPO           = "https://github.com/callahad/authdaemon"
@@ -18,6 +19,7 @@ const (
 
 func main() {
 	// TODO: Set up a config parser
+
 	// Let the PORT environment variable override the configuration.
 	// This is necessary for tools like https://github.com/codegangsta/gin
 	// (Not to be confused with gin-gonic/gin, the web framework this uses.)
