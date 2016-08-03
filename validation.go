@@ -64,14 +64,7 @@ func onlyOrigin(uri string) bool {
 
 // containedBy checks that a given URL is within a given origin.
 func containedBy(uri string, origin string) bool {
-	if !validURI(origin) || !validURI(uri) {
-		return false
-	}
-
-	if !onlyOrigin(origin) {
-		return false
-	}
-
+	// Parse both URLs
 	a, err := url.Parse(uri)
 	if err != nil {
 		return false
@@ -82,5 +75,24 @@ func containedBy(uri string, origin string) bool {
 		return false
 	}
 
-	return a.Scheme == b.Scheme && a.Host == b.Host
+	// They must have the same scheme and host:port
+	if a.Scheme != b.Scheme {
+		return false
+	}
+
+	if a.Host != b.Host {
+		return false
+	}
+
+	// They must both be valid URIs
+	if !validURI(origin) || !validURI(uri) {
+		return false
+	}
+
+	// The origin URL must only include a scheme, host, and optional port.
+	if !onlyOrigin(origin) {
+		return false
+	}
+
+	return true
 }

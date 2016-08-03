@@ -69,6 +69,7 @@ func TestValidURI(t *testing.T) {
 		// Weird strings
 		"http://example.com:8080:8080",
 		"http://:8080:8080",
+		"http://^",
 	}
 
 	for _, uri := range validCases {
@@ -181,6 +182,26 @@ func TestContainedBy(t *testing.T) {
 		},
 
 		// Invalid cases
+		{
+			"http://example.com^",
+			"http://example.com",
+			false,
+		},
+		{
+			"http://example.com",
+			"http://example.com^",
+			false,
+		},
+		{
+			"http://user:pass@example.com",
+			"http://example.com",
+			false,
+		},
+		{
+			"http://example.com",
+			"http://user:pass@example.com",
+			false,
+		},
 		{
 			"http://example.com",
 			"http://example.com/foo",
